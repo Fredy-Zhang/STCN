@@ -39,7 +39,7 @@ from PIL import Image
 
 from model.eval_network import STCN
 from dataset.generic_test_dataset import GenericTestDataset
-from util.tensor_util import unpad
+from util.tensor_util import unpad, compute_tensor_iou
 from inference_core_yv import InferenceCore
 
 from progressbar import progressbar
@@ -83,8 +83,9 @@ for k in list(prop_saved.keys()):
 prop_model.load_state_dict(prop_saved)
 
 # Start eval
-for data in progressbar(test_loader, max_value=len(test_loader), redirect_stdout=True):
 
+for data in progressbar(test_loader, max_value=len(test_loader), redirect_stdout=False):
+    meanIoU = []
     with torch.cuda.amp.autocast(enabled=args.amp):
         rgb = data['rgb']
         msk = data['gt'][0]
@@ -99,56 +100,85 @@ for data in progressbar(test_loader, max_value=len(test_loader), redirect_stdout
 
         # Frames with labels, but they are not exhaustively labeled
         frames_with_gt = sorted(list(gt_obj.keys()))
-        processor = InferenceCore(prop_model, rgb, num_objects=num_objects, top_k=top_k, 
-                                    mem_every=args.mem_every, include_last=args.include_last)
+        #processor = InferenceCore(prop_model, rgb, num_objects=num_objects, top_k=top_k, 
+        #                            mem_every=args.mem_every, include_last=args.include_last)
 
         # min_idx tells us the starting point of propagation
         # Propagating before there are labels is not useful
         min_idx = 99999
-        for i, frame_idx in enumerate(frames_with_gt):
-            min_idx = min(frame_idx, min_idx)
-            # Note that there might be more than one label per frame
-            obj_idx = gt_obj[frame_idx][0].tolist()
-            # Map the possibly non-continuous labels into a continuous scheme
-            obj_idx = [info['label_convert'][o].item() for o in obj_idx]
-
-            # Append the background label
-            with_bg_msk = torch.cat([
-                1 - torch.sum(msk[:,frame_idx], dim=0, keepdim=True),
-                msk[:,frame_idx],
-            ], 0).cuda()
-
-            # We perform propagation from the current frame to the next frame with label
-            if i == len(frames_with_gt) - 1:
-                processor.interact(with_bg_msk, frame_idx, rgb.shape[1], obj_idx)
+        #print(len(frames_with_gt))
+        """
+           Every batch is 24: are enough.
+        """
+        b_size = 20
+        _index = list(range(b_size))
+        for j in range(0, len(frames_with_gt), b_size):
+            #processor = InferenceCore(prop_model, rgb, num_objects=num_objects, top_k=top_k, 
+            #                        mem_every=args.mem_every, include_last=args.include_last)
+            if j+b_size > len(frames_with_gt):
+                tmp = frames_with_gt[j:]
+                processor = InferenceCore(prop_model, rgb[:,j:,:,:], num_objects=num_objects, top_k=top_k,
+                                    mem_every=args.mem_every, include_last=args.include_last)
             else:
-                processor.interact(with_bg_msk, frame_idx, frames_with_gt[i+1]+1, obj_idx)
+                tmp = frames_with_gt[j:(j+b_size)]
+                processor = InferenceCore(prop_model, rgb[:,j:(j+b_size),:,:], num_objects=num_objects, top_k=top_k,
+                                    mem_every=args.mem_every, include_last=args.include_last)
+            for i, frame_idx in enumerate(tmp):
+                #print(i, "frame", frame_idx)
+                min_idx = min(frame_idx, min_idx)
+                # Note that there might be more than one label per frame
+                obj_idx = gt_obj[frame_idx][0].tolist()
+                # Map the possibly non-continuous labels into a continuous scheme
+                obj_idx = [info['label_convert'][o].item() for o in obj_idx]
 
-        # Do unpad -> upsample to original size (we made it 480p)
-        out_masks = torch.zeros((processor.t, 1, *size), dtype=torch.uint8, device='cuda')
+                # Append the background label
+                with_bg_msk = torch.cat([
+                    1 - torch.sum(msk[:,frame_idx], dim=0, keepdim=True),
+                    msk[:,frame_idx],
+                ], 0).cuda()
 
-        for ti in range(processor.t):
-            prob = unpad(processor.prob[:,ti], processor.pad)
-            prob = F.interpolate(prob, size, mode='bilinear', align_corners=False)
-            out_masks[ti] = torch.argmax(prob, dim=0)
+                # We perform propagation from the current frame to the next frame with label
+                #if i == len(frames_with_gt) - 1:
+                if i == len(tmp) - 1:
+                    #processor.interact(with_bg_msk, frame_idx, rgb.shape[1], obj_idx)
+                    processor.interact(with_bg_msk, i, len(tmp), obj_idx)
+                else:
+                    #processor.interact(with_bg_msk, frame_idx, frames_with_gt[z+1]+1, obj_idx)
+                    processor.interact(with_bg_msk, i, _index[i+1]+1, obj_idx)
 
-        out_masks = (out_masks.detach().cpu().numpy()[:,0]).astype(np.uint8)
+            #print("processor: ", processor.t, "size: ", *size)
+            # Do unpad -> upsample to original size (we made it 480p)
+            out_masks = torch.zeros((processor.t, 1, *size), dtype=torch.uint8, device='cuda')
+            #out_masks = torch.zeros((processor.t, 1, *size), dtype=torch.uint8)
 
-        # Remap the indices to the original domain
-        idx_masks = np.zeros_like(out_masks)
-        for i in range(1, num_objects+1):
-            backward_idx = info['label_backward'][i].item()
-            idx_masks[out_masks==i] = backward_idx
-        
-        # Save the results
-        this_out_path = path.join(out_path, name)
-        os.makedirs(this_out_path, exist_ok=True)
-        for f in range(idx_masks.shape[0]):
-            if f >= min_idx:
-                img_E = Image.fromarray(idx_masks[f])
-                img_E.putpalette(palette)
-                img_E.save(os.path.join(this_out_path, info['frames'][f][0].replace('.jpg','.png')))
+            for ti in range(processor.t):
+                prob = unpad(processor.prob[:,ti], processor.pad)
+                prob = F.interpolate(prob, size, mode='bilinear', align_corners=False)
+                out_masks[ti] = torch.argmax(prob, dim=0)
+                #print(out_masks[ti][0,:,:].sum(1))
+                #print(data['gts'][0,0,j+ti,0,:,:].shape)
+                #print(compute_tensor_iou(torch.flatten(out_masks[ti][0,:,:]).detach().cpu().int(), torch.flatten(data['gts'][0,0,j+ti,0,:,:]).int()))
+                meanIoU.append(compute_tensor_iou(torch.flatten(out_masks[ti][0,:,:]).detach().cpu().int(), torch.flatten(data['gts'][0,0,j+ti,0,:,:]).int()))
+            
+            out_masks = (out_masks.detach().cpu().numpy()[:,0]).astype(np.uint8)
+            #out_masks = (out_masks.detach().numpy()[:,0]).astype(np.uint8)
 
+            # Remap the indices to the original domain
+            idx_masks = np.zeros_like(out_masks)
+            for i in range(1, num_objects+1):
+                backward_idx = info['label_backward'][i].item()
+                idx_masks[out_masks==i] = backward_idx
+            
+            # Save the results
+            this_out_path = path.join(out_path, name)
+            os.makedirs(this_out_path, exist_ok=True)
+            for f in range(idx_masks.shape[0]):
+                if j+f >= min_idx:
+                    img_E = Image.fromarray(idx_masks[f])
+                    img_E.putpalette(palette)
+                    img_E.save(os.path.join(this_out_path, info['frames'][j+f][0].replace('.jpg','.png')))
+        print("Mean IoU: ", len(meanIoU))
+        print("Mean IOU is: ", sum(meanIoU)/len(meanIoU), "in ", this_out_path)
         del rgb
         del msk
         del processor

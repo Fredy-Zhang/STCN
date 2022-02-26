@@ -14,22 +14,34 @@ from dataset.util import all_to_onehot
 
 class GenericTestDataset(Dataset):
     def __init__(self, data_root, res=480):
-        self.image_dir = path.join(data_root, 'JPEGImages')
-        self.mask_dir = path.join(data_root, 'Annotations')
+        #self.image_dir = path.join(data_root, 'JPEGImages')
+        #self.mask_dir = path.join(data_root, 'Annotations')
+        self.data_root = path.join(data_root, 'annotations')
+        self.val_path = path.join(data_root, 'val.txt')
 
         self.videos = []
         self.shape = {}
         self.frames = {}
 
-        vid_list = sorted(os.listdir(self.image_dir))
+        vid_list = []
+        if self.val_path is not None:
+            with open(self.val_path, "r") as f:
+                while True:
+                    file_name = f.readline()
+                    if not file_name:
+                        break
+                    file_name = file_name.strip("\n")
+                    vid_list.append(file_name)
+
+        ### vid_list = sorted(os.listdir(self.image_dir))
         # Pre-reading
         for vid in vid_list:
-            frames = sorted(os.listdir(os.path.join(self.image_dir, vid)))
+            frames = sorted(os.listdir(os.path.join(self.data_root, vid, 'rgb')))
             self.frames[vid] = frames
 
             self.videos.append(vid)
-            first_mask = os.listdir(path.join(self.mask_dir, vid))[0]
-            _mask = np.array(Image.open(path.join(self.mask_dir, vid, first_mask)).convert("P"))
+            first_mask = os.listdir(path.join(self.data_root, vid, 'mask'))[0]
+            _mask = np.array(Image.open(path.join(self.data_root, vid, 'mask', first_mask)).convert("P"))
             self.shape[vid] = np.shape(_mask)
 
         if res != -1:
@@ -59,8 +71,11 @@ class GenericTestDataset(Dataset):
         info['size'] = self.shape[video] # Real sizes
         info['gt_obj'] = {} # Frames with labelled objects
 
-        vid_im_path = path.join(self.image_dir, video)
-        vid_gt_path = path.join(self.mask_dir, video)
+        #vid_im_path = path.join(self.image_dir, video)
+        #vid_gt_path = path.join(self.mask_dir, video)
+		
+        vid_im_path = path.join(self.data_root, video, 'rgb')
+        vid_gt_path = path.join(self.data_root, video, 'mask')
 
         frames = self.frames[video]
 
@@ -101,6 +116,8 @@ class GenericTestDataset(Dataset):
         masks = torch.from_numpy(all_to_onehot(masks, labels)).float()
 
         # Resize to 480p
+        masks_tmp = masks
+        masks_tmp = masks_tmp.unsqueeze(2)
         masks = self.mask_transform(masks)
         masks = masks.unsqueeze(2)
 
@@ -111,6 +128,7 @@ class GenericTestDataset(Dataset):
             'gt': masks,
             'info': info,
             'palette': np.array(palette),
+            'gts': masks_tmp,
         }
 
         return data

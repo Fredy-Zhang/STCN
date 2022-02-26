@@ -17,8 +17,9 @@ class HyperParameters():
         parser.add_argument('--bl_root', help='Blender training data root', default='../BL30K')
         parser.add_argument('--yv_root', help='YouTubeVOS data root', default='../YouTube')
         parser.add_argument('--davis_root', help='DAVIS data root', default='../DAVIS')
+        parser.add_argument('--al_root', help='AlData data root', default='../AlData')
 
-        parser.add_argument('--stage', help='Training stage (0-static images, 1-Blender dataset, 2-DAVIS+YouTubeVOS (300K), 3-DAVIS+YouTubeVOS (150K))', type=int, default=0)
+        parser.add_argument('--stage', help='Training stage (0-static images, 1-Blender dataset, 2-DAVIS+YouTubeVOS (300K), 3-DAVIS+YouTubeVOS (150K), 4-Ali data)', type=int, default=0)
         parser.add_argument('--num_workers', help='Number of datalaoder workers per process', type=int, default=8)
 
         # Generic learning parameters
@@ -76,6 +77,13 @@ class HyperParameters():
             self.args['lr'] = none_or_default(self.args['lr'], 1e-5)
             self.args['batch_size'] = none_or_default(self.args['batch_size'], 4)
             self.args['iterations'] = none_or_default(self.args['iterations'], 150000)
+            self.args['steps'] = none_or_default(self.args['steps'], [125000])
+            self.args['single_object'] = False
+        elif self.args['stage'] == 4:
+            # 150K main training for after static image pretraining
+            self.args['lr'] = none_or_default(self.args['lr'], 1e-5)
+            self.args['batch_size'] = none_or_default(self.args['batch_size'], 4)
+            self.args['iterations'] = none_or_default(self.args['iterations'], 100000)
             self.args['steps'] = none_or_default(self.args['steps'], [125000])
             self.args['single_object'] = False
         else:

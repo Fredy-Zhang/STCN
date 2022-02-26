@@ -10,7 +10,7 @@ import torch.distributed as distributed
 
 from model.model import STCNModel
 from dataset.static_dataset import StaticTransformDataset
-from dataset.vos_dataset import VOSDataset
+from dataset.vos_dataset import VOSDataset, VOSALDataset
 
 from util.logger import TensorboardLogger
 from util.hyper_para import HyperParameters
@@ -111,6 +111,18 @@ def renew_bl_loader(max_skip):
 
     return construct_loader(train_dataset)
 
+def renew_al_loader(max_skip):
+    """
+      data_root, train_path, val_path, max_jump, is_bl, subset=None
+    """
+    train_dataset = VOSALDataset(path.join(al_root, 'annotations'), 
+                        path.join(al_root, 'train.txt'), path.join(al_root, 'val.txt'), max_skip, is_bl=True)
+
+    print('Blender dataset size: ', len(train_dataset))
+    print('Renewed with skip: ', max_skip)
+
+    return construct_loader(train_dataset)
+
 """
 Dataset related
 """
@@ -144,6 +156,16 @@ elif para['stage'] == 1:
 
     train_sampler, train_loader = renew_bl_loader(5)
     renew_loader = renew_bl_loader
+elif para['stage'] == 4:
+    """
+      Our data
+    """
+    increase_skip_fraction = [0.1, 0.2, 0.3, 0.4, 0.8, 1.0]
+    al_root = path.join(path.expanduser(para['al_root']))
+    
+    train_sampler, train_loader = renew_al_loader(5)
+    renew_loader = renew_al_loader
+
 else:
     # stage 2 or 3
     increase_skip_fraction = [0.1, 0.2, 0.3, 0.4, 0.9, 1.0]
