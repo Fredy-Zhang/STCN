@@ -81,6 +81,7 @@ class GenericTestDataset(Dataset):
 
         images = []
         masks = []
+        masks_num = 0
         for i, f in enumerate(frames):
             img = Image.open(path.join(vid_im_path, f)).convert('RGB')
             images.append(self.im_transform(img))
@@ -93,6 +94,7 @@ class GenericTestDataset(Dataset):
                 this_labels = np.unique(masks[-1])
                 this_labels = this_labels[this_labels!=0]
                 info['gt_obj'][i] = this_labels
+                masks_num = masks_num + 1
             else:
                 # Mask not exists -> nothing in it
                 masks.append(np.zeros(self.shape[video]))
@@ -129,6 +131,7 @@ class GenericTestDataset(Dataset):
             'info': info,
             'palette': np.array(palette),
             'gts': masks_tmp,
+            'msk_n':masks_num,
         }
 
         return data
